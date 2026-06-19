@@ -924,6 +924,15 @@ class TestSudo_Functional(IntegrationTest):
             f"--sudocmds={allowed_command}", rule_name
         ])
 
+    def _set_sssd_debug_level(self, host, level=9):
+        """Set debug_level in all SSSD service and domain sections."""
+        with remote_sssd_config(host) as sssd_conf:
+            for service in sssd_conf.list_services():
+                sssd_conf.edit_service(service, 'debug_level', level)
+            for domain in sssd_conf.list_domains():
+                sssd_conf.edit_domain(domain, 'debug_level', level)
+        clear_sssd_cache(host)
+
     def test_sudorule_add_allow_command_func001(self):
         master = self.master
         client = self.clients[0].hostname
@@ -1609,98 +1618,118 @@ class TestSudo_Functional(IntegrationTest):
 
     def test_007_sudorule_offline_caching_option_command(self):
         master = self.master
-        kinit_admin(master)
+        client_sssd_conf_backup = FileBackup(self.client, paths.SSSD_CONF)
+        master_sssd_conf_backup = FileBackup(master, paths.SSSD_CONF)
+        self._set_sssd_debug_level(self.client)
+        self._set_sssd_debug_level(master)
+        try:
+            kinit_admin(master)
 
-        master.run_command([
-            "ipa", "sudorule-add-allow-command", "--sudocmds=/bin/date",
-            self.SUDO_RULE
-        ])
-        master.run_command([
-            'ipa', 'sudorule-add-option', self.SUDO_RULE,
-            '--sudooption', "!authenticate"
-        ])
-        clear_sssd_cache(self.client)
-        result = self.run_as_sudo_user(
-            "date", sudo_user="root", su_user=self.USER_1,
-            skip_password=True, skip_sssd_cache_clear=True)
+            master.run_command([
+                "ipa", "sudorule-add-allow-command", "--sudocmds=/bin/date",
+                self.SUDO_RULE
+            ])
+            master.run_command([
+                'ipa', 'sudorule-add-option', self.SUDO_RULE,
+                '--sudooption', "!authenticate"
+            ])
+            clear_sssd_cache(self.client)
+            result = self.run_as_sudo_user(
+                "date", sudo_user="root", su_user=self.USER_1,
+                skip_password=True, skip_sssd_cache_clear=True)
 
-        sys_day = self.client.run_command(
-            ["date", "+%a"]).stdout_text.strip()
-        assert sys_day in result.stdout_text
+            sys_day = self.client.run_command(
+                ["date", "+%a"]).stdout_text.strip()
+            assert sys_day in result.stdout_text
 
-        result = self.list_sudo_commands(self.USER_1,
-                                         skip_sssd_cache_clear=True)
-        assert "(root) NOPASSWD: /bin/date" in result.stdout_text
+            result = self.list_sudo_commands(self.USER_1,
+                                             skip_sssd_cache_clear=True)
+            assert "(root) NOPASSWD: /bin/date" in result.stdout_text
 
-        stop_ipa_server(master)
-        result = self.run_as_sudo_user(
-            "date", sudo_user="root", su_user=self.USER_1,
-            skip_password=True, skip_kinit=True,
-            skip_sssd_cache_clear=True)
+            stop_ipa_server(master)
+            result = self.run_as_sudo_user(
+                "date", sudo_user="root", su_user=self.USER_1,
+                skip_password=True, skip_kinit=True,
+                skip_sssd_cache_clear=True)
 
-        sys_day = self.client.run_command(
-            ["date", "+%a"]).stdout_text.strip()
-        assert sys_day in result.stdout_text
+            sys_day = self.client.run_command(
+                ["date", "+%a"]).stdout_text.strip()
+            assert sys_day in result.stdout_text
 
-        result = self.list_sudo_commands(
-            self.USER_1, skip_kinit=True, skip_sssd_cache_clear=True)
-        assert "(root) NOPASSWD: /bin/date" in result.stdout_text
+            result = self.list_sudo_commands(
+                self.USER_1, skip_kinit=True, skip_sssd_cache_clear=True)
+            assert "(root) NOPASSWD: /bin/date" in result.stdout_text
 
-        start_ipa_server(master)
-        kinit_admin(master)
-        master.run_command([
-            'ipa', 'sudorule-remove-option', self.SUDO_RULE,
-            '--sudooption', "!authenticate"
-        ])
-        master.run_command([
-            "ipa", "sudorule-remove-allow-command",
-            "--sudocmds=/bin/date", self.SUDO_RULE
-        ])
-        clear_sssd_cache(self.client)
-        clear_sssd_cache(master)
+            start_ipa_server(master)
+            kinit_admin(master)
+            master.run_command([
+                'ipa', 'sudorule-remove-option', self.SUDO_RULE,
+                '--sudooption', "!authenticate"
+            ])
+            master.run_command([
+                "ipa", "sudorule-remove-allow-command",
+                "--sudocmds=/bin/date", self.SUDO_RULE
+            ])
+            clear_sssd_cache(self.client)
+            clear_sssd_cache(master)
+        finally:
+            client_sssd_conf_backup.restore()
+            master_sssd_conf_backup.restore()
+            clear_sssd_cache(self.client)
+            clear_sssd_cache(master)
 
     def test_008_disable_sudorule_offline_caching(self):
         master = self.master
-        kinit_admin(master)
+        client_sssd_conf_backup = FileBackup(self.client, paths.SSSD_CONF)
+        master_sssd_conf_backup = FileBackup(master, paths.SSSD_CONF)
+        self._set_sssd_debug_level(self.client)
+        self._set_sssd_debug_level(master)
+        try:
+            kinit_admin(master)
 
-        master.run_command([
-            "ipa", "sudorule-add-allow-command", "--sudocmds=/bin/date",
-            self.SUDO_RULE
-        ])
-        master.run_command(["ipa", "sudorule-disable", self.SUDO_RULE])
-        clear_sssd_cache(self.client)
-        result = self.run_as_sudo_user(
-            "date", sudo_user="root", su_user=self.USER_1,
-            skip_sssd_cache_clear=True)
+            master.run_command([
+                "ipa", "sudorule-add-allow-command", "--sudocmds=/bin/date",
+                self.SUDO_RULE
+            ])
+            master.run_command(["ipa", "sudorule-disable", self.SUDO_RULE])
+            clear_sssd_cache(self.client)
+            result = self.run_as_sudo_user(
+                "date", sudo_user="root", su_user=self.USER_1,
+                skip_sssd_cache_clear=True)
 
-        sys_day = self.client.run_command(
-            ["date", "+%a"]).stdout_text.strip()
-        assert sys_day not in result.stdout_text
+            sys_day = self.client.run_command(
+                ["date", "+%a"]).stdout_text.strip()
+            assert sys_day not in result.stdout_text
 
-        result = self.list_sudo_commands(self.USER_1,
-                                         skip_sssd_cache_clear=True)
-        assert "(root) /bin/date" not in result.stdout_text
+            result = self.list_sudo_commands(self.USER_1,
+                                             skip_sssd_cache_clear=True)
+            assert "(root) /bin/date" not in result.stdout_text
 
-        stop_ipa_server(master)
-        result = self.run_as_sudo_user(
-            "date", sudo_user="root", su_user=self.USER_1,
-            skip_kinit=True, skip_sssd_cache_clear=True)
+            stop_ipa_server(master)
+            result = self.run_as_sudo_user(
+                "date", sudo_user="root", su_user=self.USER_1,
+                skip_kinit=True, skip_sssd_cache_clear=True)
 
-        sys_day = self.client.run_command(
-            ["date", "+%a"]).stdout_text.strip()
-        assert sys_day not in result.stdout_text
+            sys_day = self.client.run_command(
+                ["date", "+%a"]).stdout_text.strip()
+            assert sys_day not in result.stdout_text
 
-        result = self.list_sudo_commands(
-            self.USER_1, skip_kinit=True, skip_sssd_cache_clear=True)
-        assert "(root) /bin/date" not in result.stdout_text
+            result = self.list_sudo_commands(
+                self.USER_1, skip_kinit=True, skip_sssd_cache_clear=True)
+            assert "(root) /bin/date" not in result.stdout_text
 
-        start_ipa_server(master)
-        kinit_admin(master)
-        master.run_command(["ipa", "sudorule-enable", self.SUDO_RULE])
-        master.run_command([
-            "ipa", "sudorule-remove-allow-command",
-            "--sudocmds=/bin/date", self.SUDO_RULE
-        ])
+            start_ipa_server(master)
+            kinit_admin(master)
+            master.run_command(["ipa", "sudorule-enable", self.SUDO_RULE])
+            master.run_command([
+                "ipa", "sudorule-remove-allow-command",
+                "--sudocmds=/bin/date", self.SUDO_RULE
+            ])
+        finally:
+            client_sssd_conf_backup.restore()
+            master_sssd_conf_backup.restore()
+            clear_sssd_cache(self.client)
+            clear_sssd_cache(master)
 
 
 class TestSudo_BugFunctional(IntegrationTest):
